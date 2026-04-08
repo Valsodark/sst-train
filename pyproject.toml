@@ -1,0 +1,18 @@
+[project]
+name = "sst-train"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "copernicusmarine>=1.0.0",
+    "fastapi>=0.135.3",
+    "h5py>=3.10.0",
+    "matplotlib>=3.8.0",
+    "netcdf4>=1.6.5",
+    "numpy>=1.26.0",
+    "schedule>=1.2.1",
+    "tensorflow>=2.15.0",
+    "uvicorn>=0.44.0",
+    "xarray>=2023.10.0",
+]

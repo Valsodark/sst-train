@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "netcdfjs": "^4.0.0"
+  }
+}

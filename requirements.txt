@@ -1,0 +1,8 @@
+tensorflow>=2.15.0
+xarray>=2023.10.0
+netCDF4>=1.6.5
+numpy>=1.26.0
+matplotlib>=3.8.0
+h5py>=3.10.0
+copernicusmarine>=1.0.0
+schedule>=1.2.1
