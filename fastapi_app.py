@@ -15,13 +15,15 @@ from pydantic import BaseModel
 # Изключваме излишните съобщения от TensorFlow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-# Ограничаваме TensorFlow да не използва всички CPU ядра, за да не замръзва компютъра
-tf.config.threading.set_intra_op_parallelism_threads(2)
+# Брой нишки за TensorFlow. По подразбиране използваме всички ядра за максимална
+# скорост на инференса. Сложете TF_NUM_THREADS=2 в средата, ако компютърът замръзва.
+_TF_THREADS = int(os.environ.get('TF_NUM_THREADS', os.cpu_count() or 4))
+tf.config.threading.set_intra_op_parallelism_threads(_TF_THREADS)
 tf.config.threading.set_inter_op_parallelism_threads(2)
 
 # Глобални променливи за модела и данните
 MODEL_PATH = 'best_sst_convlstm.keras' # Сменете с името на вашия модел
-DATA_PATH = 'data/*.nc' # Път към вашите .nc файлове
+DATA_PATH = os.environ.get('DATA_PATH', 'data/*.nc') # Път към .nc файловете (override via env)
 MODEL = None
 VAR_NAME = 'sea_surface_temperature_anomaly'
 
@@ -64,7 +66,6 @@ app.add_middleware(
 )
 
 from fastapi.responses import Response
-import tempfile
 
 @app.get("/predict")
 async def predict(start_date: str, model: str = 'best_sst_convlstm.keras'):
@@ -134,8 +135,8 @@ async def predict(start_date: str, model: str = 'best_sst_convlstm.keras'):
             data_array = input_ds[var_name].values
             
             # Extract min and max temperatures for each time step before replacing NaNs with 0
-            input_min_temps = [float(np.nanmin(data_array[i])) for i in range(data_array.shape[0])]
-            input_max_temps = [float(np.nanmax(data_array[i])) for i in range(data_array.shape[0])]
+            input_min_temps = np.nanmin(data_array, axis=(1, 2)).astype(float).tolist()
+            input_max_temps = np.nanmax(data_array, axis=(1, 2)).astype(float).tolist()
             
             # Create land mask from the first frame
             land_mask = np.isnan(data_array[0]) # True for land
@@ -151,8 +152,7 @@ async def predict(start_date: str, model: str = 'best_sst_convlstm.keras'):
             model_input = tf.expand_dims(resized_frames, axis=0) # (1, 10, 511, 1080, 1)
             
             resized_frames_np = np.squeeze(resized_frames.numpy())
-            for i in range(10):
-                resized_frames_np[i][land_mask_2d] = -1000.0
+            resized_frames_np[:, land_mask_2d] = -1000.0
 
             # 3. Предвиждане
             prediction = predict_step(MODEL, model_input).numpy()
@@ -217,20 +217,13 @@ async def predict(start_date: str, model: str = 'best_sst_convlstm.keras'):
             ds_out.attrs['target_date'] = target_dt.strftime('%Y-%m-%d')
             ds_out.attrs['has_actual'] = 1 if len(ds.time) > 10 else 0
 
-            with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
-                tmp_name = tmp.name
-                
-            ds_out.to_netcdf(tmp_name, format='NETCDF3_CLASSIC', engine='netcdf4')
-            
-            with open(tmp_name, 'rb') as f:
-                nc_bytes = f.read()
-            os.remove(tmp_name)
-            
-            # Изчистваме кеша на xarray за да предотвратим memory leaks
+            # Сериализираме директно в паметта (без бавен запис/четене от диска)
+            buf = io.BytesIO()
+            ds_out.to_netcdf(buf, engine='h5netcdf')
+            nc_bytes = buf.getvalue()
+
+            # Изчистваме кеша на xarray за да предотвратим memory leaks (евтино)
             xr.backends.file_manager.FILE_CACHE.clear()
-            
-            import gc
-            gc.collect()
 
             return Response(content=nc_bytes, media_type="application/x-netcdf")
     except HTTPException:
