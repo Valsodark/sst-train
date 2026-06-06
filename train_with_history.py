@@ -55,7 +55,7 @@ class SSTDataGenerator(Sequence):
 
 
 def load_and_preprocess_data(data_dir, variable_name='analysed_sst', downsample_factor=4):
-    """Load NetCDF files, downsample, handle NaNs, normalize."""
+    """Load NetCDF files, downsample, and handle NaNs. Normalization is done by the caller."""
     file_pattern = os.path.join(data_dir, '*.nc')
     files = sorted(glob.glob(file_pattern))
 
@@ -66,31 +66,29 @@ def load_and_preprocess_data(data_dir, variable_name='analysed_sst', downsample_
     print(f"Applying {downsample_factor}x spatial downsampling...")
 
     data_list = []
-    actual_var_name = variable_name
 
     for i, f in enumerate(files):
         try:
-            ds = xr.open_dataset(f)
-            if i == 0:
+            with xr.open_dataset(f) as ds:
+                var_to_use = variable_name
                 if variable_name not in ds.data_vars:
                     possible_vars = [v for v in ds.data_vars if 'bnds' not in v and 'bounds' not in v]
                     if possible_vars:
-                        actual_var_name = possible_vars[0]
-                        print(f"Variable '{variable_name}' not found. Using '{actual_var_name}'.")
+                        var_to_use = possible_vars[0]
+                        print(f"Variable '{variable_name}' not found in {os.path.basename(f)}. Using '{var_to_use}'.")
 
-            val = ds[actual_var_name].values
-            if val.ndim == 4:
-                val = val[0, 0]
-            elif val.ndim == 3:
-                val = val[0]
-            elif val.ndim > 4:
-                while val.ndim > 2:
+                val = ds[var_to_use].values
+                if val.ndim == 4:
+                    val = val[0, 0]
+                elif val.ndim == 3:
                     val = val[0]
+                elif val.ndim > 4:
+                    while val.ndim > 2:
+                        val = val[0]
 
-            if val.ndim == 2:
-                val = val[::downsample_factor, ::downsample_factor]
-                data_list.append(val)
-            ds.close()
+                if val.ndim == 2:
+                    val = val[::downsample_factor, ::downsample_factor]
+                    data_list.append(val)
         except Exception as e:
             print(f"Error loading {f}: {e}")
 
@@ -100,16 +98,9 @@ def load_and_preprocess_data(data_dir, variable_name='analysed_sst', downsample_
     data = np.array(data_list, dtype=np.float32)
     print(f"Loaded data shape: {data.shape}")
 
-    # Handle NaNs (land)
     data = np.nan_to_num(data, nan=0.0)
 
-    # Z-score normalization
-    mean = float(np.mean(data))
-    std = float(np.std(data))
-    data = (data - mean) / (std + 1e-7)
-    print(f"Data normalized. Mean: {mean:.4f}, Std: {std:.4f}")
-
-    return data, mean, std
+    return data
 
 
 def build_convlstm_model(input_shape):
@@ -190,7 +181,7 @@ if __name__ == "__main__":
     EPOCHS = 20
 
     # 1. Load and preprocess data
-    data, data_mean, data_std = load_and_preprocess_data(
+    data = load_and_preprocess_data(
         DATA_DIR, variable_name=VARIABLE_NAME, downsample_factor=DOWNSAMPLE_FACTOR
     )
 
@@ -200,6 +191,13 @@ if __name__ == "__main__":
     val_data = data[split_idx:]
     print(f"Training frames: {len(train_data)}")
     print(f"Validation frames: {len(val_data)}")
+
+    # Normalize using training statistics only to avoid data leakage into validation
+    data_mean = float(np.mean(train_data))
+    data_std = float(np.std(train_data))
+    train_data = (train_data - data_mean) / (data_std + 1e-7)
+    val_data = (val_data - data_mean) / (data_std + 1e-7)
+    print(f"Data normalized. Mean (train): {data_mean:.4f}, Std (train): {data_std:.4f}")
 
     # 3. Generators
     train_gen = SSTDataGenerator(train_data, SEQ_LENGTH, BATCH_SIZE, shuffle=True)
@@ -234,7 +232,7 @@ if __name__ == "__main__":
 
     # 7. Save model and stats
     model.save('final_sst_convlstm.keras')
-    np.save('normalization_stats.npy', {'mean': data_mean, 'std': data_std})
+    np.savez('normalization_stats.npz', mean=np.float32(data_mean), std=np.float32(data_std))
 
     # 8. Save full training history
     history_serializable = {k: [float(v) for v in vals] for k, vals in history.history.items()}
@@ -254,8 +252,8 @@ if __name__ == "__main__":
     baseline_mse, baseline_mae = compute_persistence_baseline(val_data, SEQ_LENGTH)
 
     # 12. Compute improvement
-    mse_improvement_pct = (baseline_mse - final_val_loss) / baseline_mse * 100
-    mae_improvement_pct = (baseline_mae - final_val_mae) / baseline_mae * 100
+    mse_improvement_pct = (baseline_mse - final_val_loss) / baseline_mse * 100 if baseline_mse > 0 else float('nan')
+    mae_improvement_pct = (baseline_mae - final_val_mae) / baseline_mae * 100 if baseline_mae > 0 else float('nan')
 
     # 13. Save and print results
     results = {
@@ -290,7 +288,7 @@ if __name__ == "__main__":
     print("\nFiles produced:")
     print("  - best_sst_convlstm.keras       (best model by val_loss)")
     print("  - final_sst_convlstm.keras      (model at end of training)")
-    print("  - normalization_stats.npy       (mean and std for inference)")
+    print("  - normalization_stats.npz       (mean and std for inference)")
     print("  - training_history.json         (per-epoch loss/mae values)")
     print("  - training_log.csv              (same, CSV backup)")
     print("  - training_curves.png           (Фиг. 3.2 for thesis)")

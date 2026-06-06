@@ -1,6 +1,6 @@
 import os
-import io
 import glob
+import tempfile
 import base64
 import numpy as np
 import pandas as pd
@@ -217,10 +217,13 @@ async def predict(start_date: str, model: str = 'best_sst_convlstm.keras'):
             ds_out.attrs['target_date'] = target_dt.strftime('%Y-%m-%d')
             ds_out.attrs['has_actual'] = 1 if len(ds.time) > 10 else 0
 
-            # Сериализираме директно в паметта (без бавен запис/четене от диска)
-            buf = io.BytesIO()
-            ds_out.to_netcdf(buf, engine='h5netcdf')
-            nc_bytes = buf.getvalue()
+            # Frontend очаква NETCDF4 (HDF5) — записваме в temp файл и четем обратно.
+            with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
+                tmp_name = tmp.name
+            ds_out.to_netcdf(tmp_name, format='NETCDF4', engine='netcdf4')
+            with open(tmp_name, 'rb') as f:
+                nc_bytes = f.read()
+            os.remove(tmp_name)
 
             # Изчистваме кеша на xarray за да предотвратим memory leaks (евтино)
             xr.backends.file_manager.FILE_CACHE.clear()

@@ -1,3 +1,13 @@
+---
+title: Ocean AI Prediction API
+emoji: 🌊
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # SSTa ConvLSTM Training Project
 
 This directory contains the Python backend code to train the ConvLSTM model using real NetCDF climate data.

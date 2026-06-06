@@ -1,0 +1,15 @@
+.venv/
+data/
+*.keras
+!best_sst_convlstm.keras
+*.npy
+*.npz
+*.csv
+__pycache__/
+*.pyc
+.git/
+*.7z
+training_history.json
+evaluation_results.json
+training_curves.png
+training_log.csv
